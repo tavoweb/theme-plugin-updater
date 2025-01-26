@@ -285,17 +285,20 @@ class Theme_Plugin_Updater {
     }
 
     /**
-     * Pervadina temos arba papildinio aplanką po atnaujinimo.
+     * Pervadina temos aplanką po atnaujinimo.
      */
     public function rename_theme_folder_after_update($upgrader_object, $options) {
         if ($options['action'] === 'update' && $options['type'] === 'theme') {
-            $theme_slug = $upgrader_object->result['destination_name']; // Senas aplanko pavadinimas
+            // Gauti originalų temos slug'ą
+            $theme_slug = $upgrader_object->skin->theme_info->get_template(); // Originalus slug (pvz., neptune-by-osetin)
             $theme_path = WP_CONTENT_DIR . '/themes/'; // Temų katalogas
 
-            // Jei senas aplankas egzistuoja, pervadinkite jį atgal į originalų pavadinimą
-            if (is_dir($theme_path . $theme_slug)) {
-                $original_slug = $upgrader_object->skin->theme_info->get_template(); // Originalus slug
-                rename($theme_path . $theme_slug, $theme_path . $original_slug);
+            // Gauti laikiną aplanko pavadinimą
+            $temp_folder = $upgrader_object->result['destination_name']; // Laikinas aplankas (pvz., tavoweb-neptune-by-osetin-02224f2)
+
+            // Jei laikinas aplankas egzistuoja, pervadinkite jį atgal į originalų pavadinimą
+            if (is_dir($theme_path . $temp_folder) && !is_dir($theme_path . $theme_slug)) {
+                rename($theme_path . $temp_folder, $theme_path . $theme_slug);
             }
         }
     }
