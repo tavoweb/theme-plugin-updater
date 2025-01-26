@@ -18,6 +18,9 @@ class Theme_Plugin_Updater {
 
         // Pridėti veiksmą, kad pervadintų temų aplankus po atnaujinimo
         add_action('upgrader_post_install', array($this, 'rename_theme_folder_after_update'), 10, 2);
+
+        // Pridėti AJAX veiksmą, kad būtų galima patikrinti atnaujinimus iš naujo
+        add_action('wp_ajax_tpu_check_updates', array($this, 'ajax_check_updates'));
     }
 
     /**
@@ -53,6 +56,12 @@ class Theme_Plugin_Updater {
 
         echo '<div class="wrap">';
         echo '<h1>Theme & Plugin Updater</h1>';
+
+        // Mygtukas "Patikrinti iš naujo"
+        echo '<button id="tpu-check-updates" class="button button-primary">Patikrinti iš naujo</button>';
+        echo '<span id="tpu-check-updates-spinner" class="spinner" style="float: none; margin-left: 10px;"></span>';
+        echo '<p id="tpu-check-updates-message"></p>';
+
         echo '<table class="widefat">';
         echo '<thead><tr><th>Type</th><th>Slug</th><th>Installed Version</th><th>GitHub Version</th><th>Status</th><th>Action</th></tr></thead>';
         echo '<tbody>';
@@ -92,6 +101,60 @@ class Theme_Plugin_Updater {
         echo '</tbody>';
         echo '</table>';
         echo '</div>';
+
+        // JavaScript, skirtas mygtuko "Patikrinti iš naujo" funkcionalumui
+        echo '
+        <script>
+        jQuery(document).ready(function($) {
+            $("#tpu-check-updates").on("click", function() {
+                var button = $(this);
+                var spinner = $("#tpu-check-updates-spinner");
+                var message = $("#tpu-check-updates-message");
+
+                button.prop("disabled", true);
+                spinner.addClass("is-active");
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: "POST",
+                    data: {
+                        action: "tpu_check_updates"
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            message.html("<div class=\'notice notice-success\'><p>" + response.data.message + "</p></div>");
+                            location.reload(); // Perkrauti puslapį, kad būtų rodomi naujausi duomenys
+                        } else {
+                            message.html("<div class=\'notice notice-error\'><p>" + response.data.message + "</p></div>");
+                        }
+                    },
+                    error: function() {
+                        message.html("<div class=\'notice notice-error\'><p>Įvyko klaida. Bandykite dar kartą.</p></div>");
+                    },
+                    complete: function() {
+                        button.prop("disabled", false);
+                        spinner.removeClass("is-active");
+                    }
+                });
+            });
+        });
+        </script>
+        ';
+    }
+
+    /**
+     * AJAX veiksmas, skirtas patikrinti atnaujinimus iš naujo.
+     */
+    public function ajax_check_updates() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Neturite teisių atlikti šį veiksmą.'));
+        }
+
+        // Išvalyti WordPress atnaujinimų transiento duomenis
+        delete_site_transient('update_themes');
+        delete_site_transient('update_plugins');
+
+        wp_send_json_success(array('message' => 'Atnaujinimai sėkmingai patikrinti.'));
     }
 
     /**
@@ -140,11 +203,27 @@ class Theme_Plugin_Updater {
             return false;
         }
 
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code === 404) {
+            error_log('GitHub repo nerastas: ' . $slug);
+            return false;
+        }
+
+        if ($response_code !== 200) {
+            error_log('GitHub API klaida: Negalima gauti duomenų. HTTP kodas: ' . $response_code);
+            return false;
+        }
+
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log('GitHub API atsakymo klaida: ' . json_last_error_msg());
+            return false;
+        }
+
+        if (empty($data->tag_name)) {
+            error_log('GitHub API klaida: Nerastas tag_name.');
             return false;
         }
 
@@ -210,13 +289,13 @@ class Theme_Plugin_Updater {
      */
     public function rename_theme_folder_after_update($upgrader_object, $options) {
         if ($options['action'] === 'update' && $options['type'] === 'theme') {
-            $theme_slug = 'neptune-by-osetin'; // Nurodykite norimą temos aplanko pavadinimą
-            $old_theme_folder = $upgrader_object->result['destination_name']; // Senas aplanko pavadinimas
+            $theme_slug = $upgrader_object->result['destination_name']; // Senas aplanko pavadinimas
             $theme_path = WP_CONTENT_DIR . '/themes/'; // Temų katalogas
 
-            // Jei senas aplankas egzistuoja ir naujas aplankas dar neegzistuoja, pervadinkite
-            if (is_dir($theme_path . $old_theme_folder) && !is_dir($theme_path . $theme_slug)) {
-                rename($theme_path . $old_theme_folder, $theme_path . $theme_slug);
+            // Jei senas aplankas egzistuoja, pervadinkite jį atgal į originalų pavadinimą
+            if (is_dir($theme_path . $theme_slug)) {
+                $original_slug = $upgrader_object->skin->theme_info->get_template(); // Originalus slug
+                rename($theme_path . $theme_slug, $theme_path . $original_slug);
             }
         }
     }
